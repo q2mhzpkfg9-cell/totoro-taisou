@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>トトロ体操</title>
+<style>
+  :root { --bg:#fbf3e4; --card:#fffdf8; --ink:#4a3b2c; --sub:#8a7762; --accent:#e58a4e; --leaf:#7fa86b; --line:#ecdcc3; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:"Hiragino Maru Gothic ProN","Hiragino Sans",system-ui,sans-serif; padding:28px 16px 56px; }
+  main { max-width:960px; margin:0 auto; text-align:center; }
+  h1 { font-size:clamp(2.4rem, 8vw, 4rem); margin:0 0 6px; letter-spacing:.06em; }
+  h1 rt { font-size:.3em; color:var(--sub); letter-spacing:.2em; }
+  .lead { color:var(--sub); font-size:clamp(1.15rem, 3.4vw, 1.5rem); margin:0 0 22px; }
+  .card { background:var(--card); border:2px solid var(--line); border-radius:28px; padding:clamp(12px, 3vw, 24px); box-shadow:0 6px 0 var(--line); }
+  .stage { background:#000; border-radius:18px; overflow:hidden; aspect-ratio:16/9; }
+  video { width:100%; height:100%; display:block; background:#000; }
+  .tools { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; align-items:center; margin-top:20px; }
+  .label { flex-basis:100%; color:var(--sub); font-size:clamp(1.1rem, 3.2vw, 1.4rem); }
+  button { font:inherit; font-weight:bold; font-size:clamp(1.25rem, 4vw, 1.7rem); padding:16px 28px; border-radius:999px; border:2px solid var(--line); background:#fff; color:inherit; cursor:pointer; }
+  button.on, button.go { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.again { background:var(--leaf); border-color:var(--leaf); color:#fff; margin-top:8px; }
+  button:disabled { opacity:.6; cursor:default; }
+  button:focus-visible, input:focus-visible { outline:4px solid var(--ink); outline-offset:3px; }
+  #gate { padding:clamp(24px, 6vw, 48px) clamp(16px, 4vw, 32px); }
+  #gate .label { display:block; margin-bottom:14px; }
+  #word { font:inherit; font-size:clamp(1.6rem, 6vw, 2.2rem); letter-spacing:.12em; text-align:center; width:min(100%, 12em); padding:14px 16px; border-radius:18px; border:2px solid var(--line); background:#fff; color:inherit; }
+  #msg { min-height:1.6em; margin:16px 0 0; font-size:clamp(1.1rem, 3.2vw, 1.4rem); color:var(--accent); font-weight:bold; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🌱 トトロ<ruby>体操<rt>たいそう</rt></ruby></h1>
+  <p class="lead">いっしょに うごいてみよう</p>
+
+  <form class="card" id="gate">
+    <label class="label" for="word">あいことばを いれてね</label>
+    <input id="word" type="text" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="tools"><button class="go" id="go">ひらく</button></div>
+    <p id="msg" role="status"></p>
+  </form>
+
+  <div class="card" id="player" hidden>
+    <div class="stage">
+      <video id="v" controls playsinline controlsList="nodownload"></video>
+    </div>
+
+    <div class="tools" id="rates">
+      <span class="label">はやさ</span>
+      <button data-rate="0.5">ゆっくり</button>
+      <button data-rate="0.75">すこし ゆっくり</button>
+      <button data-rate="1" class="on">ふつう</button>
+    </div>
+    <div class="tools">
+      <button class="again" id="again">▶ さいしょから</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const SRC = 'data/totoro.bin', ITER = 600000, KEY = 'totoro-word'; // ITER は tools/encrypt.py と同じ値
+const v = $('v');
+let rate = 1, data;
+
+// この端末に合言葉を覚えておく（使えない環境でも動くように握りつぶす）
+const saved = () => { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } };
+const save = w => { try { w ? localStorage.setItem(KEY, w) : localStorage.removeItem(KEY); } catch (e) {} };
+
+async function unlock(word) {
+  $('go').disabled = true;
+  $('msg').textContent = 'よみこみちゅう…';
+  try {
+    data = data || new Uint8Array(await (await fetch(SRC)).arrayBuffer());
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(word), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey(
+      { name:'PBKDF2', salt:data.subarray(0, 16), iterations:ITER, hash:'SHA-256' },
+      base, { name:'AES-GCM', length:256 }, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({ name:'AES-GCM', iv:data.subarray(16, 28) }, key, data.subarray(28));
+    v.src = URL.createObjectURL(new Blob([plain], { type:'video/mp4' }));
+    data = null;
+    save(word);
+    $('gate').hidden = true; $('player').hidden = false;
+  } catch (e) {
+    // 合言葉がちがうと復号に失敗する。読み込み自体の失敗は data が空のまま
+    save('');
+    $('msg').textContent = data ? 'あいことばが ちがうみたい' : 'よみこめませんでした。もういちど ためしてね';
+    $('go').disabled = false;
+    $('word').select();
+  }
+}
+
+$('gate').onsubmit = e => {
+  e.preventDefault();
+  const w = $('word').value.trim();
+  if (w) unlock(w);
+};
+
+v.oncontextmenu = e => e.preventDefault();
+v.onplay = () => { v.playbackRate = rate; };
+document.querySelectorAll('#rates button').forEach(b => b.onclick = () => {
+  rate = +b.dataset.rate;
+  v.playbackRate = rate;
+  document.querySelectorAll('#rates button').forEach(x => x.classList.toggle('on', x === b));
+});
+$('again').onclick = () => { v.currentTime = 0; v.play(); };
+
+if (saved()) { $('word').value = saved(); unlock(saved()); }
+</script>
+</body>
+</html>
